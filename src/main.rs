@@ -69,8 +69,7 @@ fn valid_href(href: &str) -> bool {
     false
 }
 
-fn get_html_by_address(url: &str) -> Vec<String> {
-    println!("get_html_by_address: {}", url);
+fn parse(url: &str) -> Vec<String> {
     let mut links = Vec::new();
     let mut result = url.split("/");
     let protocol = result.next().unwrap();
@@ -78,7 +77,6 @@ fn get_html_by_address(url: &str) -> Vec<String> {
     let domain = result.next().unwrap();
 
     let html = reqwest::blocking::get(url).unwrap().text().unwrap();
-    println!("读取到html");
     // 在html中找到所有的a标签 获取href属性
     let mut pos = 0;
     while pos < html.len() {
@@ -107,29 +105,29 @@ fn main() {
     let mut links = vec![];
     let mut bloom_filter = BloomFilter::new();
     
-    let mut temp: Vec<String> = vec!["https://chaihuibin.vercel.app".to_string()];
+    let mut wait_awled: Vec<String> = vec!["https://chaihuibin.vercel.app".to_string()];
+    bloom_filter.add("https://chaihuibin.vercel.app");
     'outer: loop {
-        let mut new_links = vec![];
-        for i in 0..temp.len() {
-            let temp1 = get_html_by_address(&temp[i]);
-            for j in 0..temp1.len() {
+        let mut new_wait_links = vec![];
+        for i in 0..wait_awled.len() {
+            let awled_links = parse(&wait_awled[i]);
+            for j in 0..awled_links.len() {
 
                 // 超过50个就不再爬了
-                if links.len() + temp.len() + new_links.len() > 50 {
-                    temp.iter().for_each(|link| {links.push(link.clone())});
-                    new_links.iter().for_each(|link: &String| {links.push(link.clone())});
+                if links.len() + wait_awled.len() + new_wait_links.len() > 50 {
+                    wait_awled.iter().for_each(|link| {links.push(link.clone())});
+                    new_wait_links.iter().for_each(|link: &String| {links.push(link.clone())});
                     break 'outer;
                 }
 
-                if bloom_filter.add(&temp1[j]) {
-                    new_links.push(temp1[j].to_string());
+                if bloom_filter.add(&awled_links[j]) {
+                    new_wait_links.push(awled_links[j].to_string());
                 }
             }
         }
-        temp.iter().for_each(|link| {links.push(link.clone())});
-        temp = new_links;
+        wait_awled.iter().for_each(|link| {links.push(link.clone())});
+        wait_awled = new_wait_links;
     }
-    temp.iter().for_each(|link| {links.push(link.clone())});
     
     for i in 0..links.len() {
         println!("{}: {}", i, links[i])
