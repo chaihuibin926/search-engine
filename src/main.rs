@@ -1,5 +1,7 @@
+use html2text::render::TrivialDecorator;
 use murmurhash3::murmurhash3_x86_32;
 use html2text::from_read;
+use html2text::from_read_with_decorator;
 use std::io::Write;
 use std::io::Read;
 use std::io::BufReader;
@@ -66,6 +68,9 @@ fn get_href_by_a_tag(a_html: &str) -> String {
     }
 }
 
+/**
+ * 校验href是否是一个可以跳转的href
+ */
 fn valid_href(href: &str) -> bool {
     if href.len() == 0 || href.eq("/") {
         return false 
@@ -76,6 +81,9 @@ fn valid_href(href: &str) -> bool {
     false
 }
 
+/**
+ * 解析目标网页，解析出网页内的links和网页的用户可见的文本内容
+ */
 fn parse(url: &str) -> (Vec<String>, String) {
     let mut links = Vec::new();
     let mut result = url.split("/");
@@ -83,9 +91,18 @@ fn parse(url: &str) -> (Vec<String>, String) {
     result.next().unwrap();
     let domain = result.next().unwrap();
 
-    let html = reqwest::blocking::get(url).unwrap().text().unwrap();
+    println!("开始请求地址{}", url);
 
-    let html_text = from_read(html.as_bytes(), 200).unwrap();
+    let html = match reqwest::blocking::get(url).unwrap().text() {
+        Ok(html) => html,
+        Err(e) => {
+            println!("请求地址失败，目标地址{}，错误信息{}", url, e);
+            return (vec![], String::from(""))
+        }
+    };
+
+    println!("进入解析阶段");
+
     // 在html中找到所有的a标签 获取href属性
     let mut pos = 0;
     while pos < html.len() {
@@ -107,11 +124,11 @@ fn parse(url: &str) -> (Vec<String>, String) {
         }
     }
    
-    (links, html_text)
+    (links, html)
 }
 
-fn open_awled_file() -> File {
-    return OpenOptions::new().read(true).write(true).create(true).append(true).open("awled_html.bin").unwrap();
+fn open_file(path: &str) -> File {
+    return OpenOptions::new().read(true).write(true).create(true).append(true).open(path).unwrap();
 }
 
 /**
@@ -119,14 +136,22 @@ fn open_awled_file() -> File {
  * id、size 为u32
  * 每一个网页存储的格式是 id\tsize\thtml\r\n\r\n
  */
-fn save_awled_html(id: u32, html: &str) {
-    let file = open_awled_file();
-    let mut write = BufWriter::new(file);
+fn save_awled_html(id: u32, html: String, url: String) {
+    let doc_raw_file = open_file("doc_raw.bin");
+    let doc_id_file = open_file("doc_id.bin");
+    // 写入doc_id.bin
+    let mut doc_id_write = BufWriter::new(doc_id_file);
+    doc_id_write.write(&id.to_le_bytes()).unwrap();
+    doc_id_write.write("\t".as_bytes()).unwrap();
+    doc_id_write.write(url.as_bytes()).unwrap();
+    doc_id_write.write("\r\n".as_bytes()).unwrap();
+    // 写入doc_raw.bin
+    let mut write = BufWriter::new(doc_raw_file);
     write.write(&id.to_le_bytes()).unwrap();
     write.write("\t".as_bytes()).unwrap();
     write.write(&(html.len() as u32).to_le_bytes()).unwrap();
     write.write("\t".as_bytes()).unwrap();
-    write.write(&html.as_bytes()).unwrap();
+    write.write(html.as_bytes()).unwrap();
     write.write("\r\n\r\n".as_bytes()).unwrap();
     write.flush().unwrap(); // 确保数据被写入文件
 }
@@ -134,11 +159,13 @@ fn save_awled_html(id: u32, html: &str) {
 /**
  * 读取爬过的网页
  */
-fn read_awled_html() {
-    let file = open_awled_file();
+fn read_awled_html() -> Vec<(u32, u32, String)> {
+    let file = open_file("doc_raw.bin");
     let mut read = BufReader::new(file);
     let mut data = vec![];
     read.read_to_end(&mut data).unwrap();
+
+    let mut result = vec![];
 
     let mut pos = 0;
     while pos < data.len() {
@@ -147,43 +174,110 @@ fn read_awled_html() {
         let size = u32::from_le_bytes(data[pos..pos + 4].try_into().unwrap());
         pos += 5;
         let html = String::from_utf8(data[pos..pos + size as usize].to_vec()).unwrap();
+
+        // let html_text = from_read_with_decorator(
+        //     html.as_bytes(),
+        //     200,
+        //     TrivialDecorator::new()
+        // )
+        // .unwrap();
+        let html_text = from_read(
+            html.as_bytes(),
+            200,
+        )
+        .unwrap();
+
         pos += 4 + size as usize;
-        println!("id: {}, size: {}, html: {}",  id, size, html);
+        result.push((id, size, html_text));
     }
+    result
 }
 
-fn main() {
+
+/**
+ * 读取doc_id
+ */
+fn read_doc_id() -> Vec<(u32, String)> {
+    let file = open_file("doc_id.bin");
+    let mut read = BufReader::new(file);
+    let mut data = vec![];
+    
+    read.read_to_end(&mut data).unwrap();
+
+    let mut result = vec![];
+    let mut pos = 0;
+    
+    while pos < data.len() {
+        // 读取u32的id
+        if pos + 4 > data.len() {
+            break;
+        }
+        let id = u32::from_le_bytes(data[pos..pos + 4].try_into().unwrap());
+        pos += 4;
+        
+        // 跳过制表符
+        if pos < data.len() && data[pos] == b'\t' {
+            pos += 1;
+        }
+        
+        // 读取URL字符串直到\r\n
+        let url_start = pos;
+        while pos < data.len() {
+            if pos + 1 < data.len() && data[pos] == b'\r' && data[pos + 1] == b'\n' {
+                break;
+            }
+            pos += 1;
+        }
+        
+        if url_start < pos {
+            let url = String::from_utf8(data[url_start..pos].to_vec()).unwrap();
+            result.push((id, url));
+        }
+        
+        // 跳过\r\n
+        if pos + 1 < data.len() {
+            pos += 2;
+        }
+    }
+    
+    result
+}
+
+fn run_awled() {
     let mut links = vec![];
     let mut bloom_filter = BloomFilter::new();
     let mut html_id: u32 = 0;
     
-    let mut wait_awled: Vec<String> = vec!["https://chaihuibin.vercel.app".to_string()];
-    bloom_filter.add("https://chaihuibin.vercel.app");
-    'outer: loop {
+    let mut wait_awled: Vec<String> = vec!["https://www.woshipm.com/class/6238617.html".to_string()];
+    bloom_filter.add("https://www.woshipm.com/class/6238617.html");
+    loop {
         let mut new_wait_links = vec![];
         for i in 0..wait_awled.len() {
             let (awled_links, html_text) = parse(&wait_awled[i]);
+            save_awled_html(html_id, html_text, wait_awled[i].clone());
+            html_id += 1;
             for j in 0..awled_links.len() {
-
-                // 超过10个就不再爬了
-                if links.len() + wait_awled.len() + new_wait_links.len() > 10 {
-                    wait_awled.iter().for_each(|link| {links.push(link.clone())});
-                    new_wait_links.iter().for_each(|link: &String| {links.push(link.clone())});
-                    break 'outer;
-                }
-
                 if bloom_filter.add(&awled_links[j]) {
                     new_wait_links.push(awled_links[j].to_string());
-                    save_awled_html(html_id, &html_text);
-                    html_id += 1;
                 }
             }
         }
         wait_awled.iter().for_each(|link| {links.push(link.clone())});
         wait_awled = new_wait_links;
+        if links.len() > 6 {
+            break
+        }
     }
     
     for i in 0..links.len() {
         println!("{}: {}", i, links[i])
     }
+}
+
+fn main() {
+    run_awled();
+    // let data = read_awled_html();
+    // for i in 0..10 {
+    //     println!("{}: {}", i, data[i].2)
+    // }
 }
