@@ -3,12 +3,38 @@ use mini_search_engine::open_file;
 use std::{fs::{read_dir, read}, io::{BufReader, Read}};
 
 fn main() {
-    println!("analyze");
+    // let words = get_wrods();
+    // let data = read_awled_html();
+    // let html = data[0].2.clone();
+    // let matched_words = match_words(&words, html);
+    // println!("{:?}", matched_words);
 }
 
 // 匹配网页中的分词
-// fn match_words(words: Vec<String>, html: String) -> Vec<String> {
-// }
+fn match_words(words: &Vec<String>, html: String) -> Vec<String> {
+    let mut result = vec![];
+    let chars = html.chars().collect::<Vec<char>>();
+    let len = chars.len();
+    let mut i = 0;
+    while i < len {
+        // println!("{}", i);
+        let mut find = false;
+        for j in i..len {
+            let word = chars[i..i+len-j].iter().collect::<String>();
+            if words.contains(&word) {
+                i += word.chars().count();
+                result.push(word);
+                find = true;
+                break;
+            }
+        }
+        if !find {
+            i += 1;
+        }
+    }
+
+    result
+}
 
 /**
  * 读取爬过的网页
@@ -112,4 +138,19 @@ fn read_doc_id() -> Vec<(u32, String)> {
     }
     
     result
+}
+
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_match_words() {
+        let words1 = vec!["你好啊".to_string(), "xxx".to_string(), "我是真的xxx".to_string(), "真的爱上你".to_string()];
+        let html1 = "我说你好啊,xxx,我是真的xxx!".to_string();
+
+        let words2 = match_words(&words1, html1);
+        assert_eq!(
+            vec!["你好啊".to_string(), "xxx".to_string(), "我是真的xxx".to_string()], words2
+        );
+    }
 }
